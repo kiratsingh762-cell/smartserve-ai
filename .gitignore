@@ -1,0 +1,27 @@
+# Secret keys - NEVER commit this
+.env
+
+# Virtual environment - too large to share
+smartserve_env/
+venv/
+env/
+
+# ChromaDB auto-generated files
+data/vectordb/
+
+# Python compiled files (auto-generated, not needed)
+__pycache__/
+*.pyc
+*.pyo
+
+# Kaggle credentials
+.kaggle/
+
+# VS Code settings
+.vscode/
+
+# Large data files
+data/raw/
+data/processed/
+
+.kaggle/
