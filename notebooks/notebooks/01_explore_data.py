@@ -1,8 +1,24 @@
-from pathlib import Path
-import pandas as pd
-
-BASE_DIR = Path(__file__).resolve().parents[2]  # smartserve-ai root
-DATA_PATH = BASE_DIR / "data" / "raw" / "Bitext_Sample_Customer_Support_Training_Dataset_27K_responses-v11.csv"
-
-faq = pd.read_csv(DATA_PATH)
-print(faq[['instruction', 'response']].head(5))
+{
+ "cells": [],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "smartserve_env",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.13.3"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}

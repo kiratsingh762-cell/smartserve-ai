@@ -1,16 +1,22 @@
 import streamlit as st
 import requests
 import sys
-sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+import uuid
 
-# ── Page Config ───────────────────────────────────────────────
+API_BASE = "http://localhost:8000"
+
+if "session_id" not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())[:8]
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 st.set_page_config(
     page_title="SmartServe AI",
-    page_icon="[AI]",
+    page_icon="🤖",
     layout="centered"
 )
 
-# ── Styling ───────────────────────────────────────────────────
 st.markdown("""
 <style>
 .header-box {
@@ -36,7 +42,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ── Header ────────────────────────────────────────────────────
 st.markdown("""
 <div class="header-box">
     <h2>SmartServe AI</h2>
@@ -44,7 +49,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ── Sidebar ───────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### How to Use")
     st.markdown("""
@@ -63,24 +67,34 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### System Status")
     try:
-        health = requests.get("http://localhost:8000/health", timeout=3).json()
-        st.success(f"API: {health.get('api','unknown')}")
-        st.info(f"Vectors: {health.get('vectors', 'N/A'):,}")
-        st.info(f"AS400: {health.get('as400','N/A')}")
-    except:
+        health_resp = requests.get(f"{API_BASE}/health", timeout=3)
+        health_resp.raise_for_status()
+        health = health_resp.json()
+        st.success(f"API: {health.get('api', 'unknown')}")
+        vectors = health.get("vectors", "N/A")
+        if isinstance(vectors, int):
+            st.info(f"Vectors: {vectors:,}")
+        else:
+            st.info(f"Vectors: {vectors}")
+        st.info(f"AS400: {health.get('as400', 'N/A')}")
+    except Exception as e:
         st.error("API Offline — start the server")
+        st.caption(str(e))
         st.code("uvicorn src.api.main:app --reload --port 8000")
 
     st.markdown("---")
     if st.button("Clear Chat History"):
+        try:
+            requests.delete(
+                f"{API_BASE}/session/{st.session_state.session_id}",
+                timeout=5
+            )
+        except Exception:
+            pass
+        st.session_state.session_id = str(uuid.uuid4())[:8]
         st.session_state.messages = []
         st.rerun()
 
-# ── Chat History Init ─────────────────────────────────────────
-# CONCEPT - st.session_state:
-# Streamlit reruns the ENTIRE script on every user interaction.
-# session_state is a dictionary that PERSISTS between reruns.
-# Without it, chat history would be wiped on every message.
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {
@@ -100,12 +114,10 @@ if "messages" not in st.session_state:
         }
     ]
 
-# ── Render Chat History ───────────────────────────────────────
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-        # Show AS400 order data if present
         if msg.get("as400_data") and msg["as400_data"].get("found"):
             d = msg["as400_data"]
             st.markdown(f"""
@@ -120,7 +132,6 @@ for msg in st.session_state.messages:
             </div>
             """, unsafe_allow_html=True)
 
-        # Show escalation notice
         if msg.get("escalate"):
             st.markdown("""
             <div class="escalate-box">
@@ -129,35 +140,34 @@ for msg in st.session_state.messages:
             </div>
             """, unsafe_allow_html=True)
 
-        # Show sources
         if msg.get("sources"):
             for s in msg["sources"]:
-                st.markdown(f'<span class="source-tag">{s}</span>',
-                            unsafe_allow_html=True)
+                st.markdown(
+                    f'<span class="source-tag">{s}</span>',
+                    unsafe_allow_html=True
+                )
 
-# ── Chat Input ────────────────────────────────────────────────
 if prompt := st.chat_input("Type your question here..."):
-
-    # Display user message immediately
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.write(prompt)
 
-    # Get AI response
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
                 response = requests.post(
-                    "http://localhost:8000/chat",
-                    json={"message": prompt, "session_id": "streamlit"},
+                    f"{API_BASE}/chat",
+                    json={
+                        "message": prompt,
+                        "session_id": st.session_state.session_id
+                    },
                     timeout=30
                 )
+                response.raise_for_status()
                 data = response.json()
 
-                # Display the answer
                 st.write(data["answer"])
 
-                # Display AS400 order data
                 if data.get("as400_data") and data["as400_data"].get("found"):
                     d = data["as400_data"]
                     st.markdown(f"""
@@ -172,7 +182,6 @@ if prompt := st.chat_input("Type your question here..."):
                     </div>
                     """, unsafe_allow_html=True)
 
-                # Display escalation notice
                 if data.get("escalate_to_human"):
                     st.markdown("""
                     <div class="escalate-box">
@@ -180,22 +189,28 @@ if prompt := st.chat_input("Type your question here..."):
                     </div>
                     """, unsafe_allow_html=True)
 
-                # Display source tags
                 if data.get("sources"):
                     for s in data["sources"]:
-                        st.markdown(f'<span class="source-tag">{s}</span>',
-                                    unsafe_allow_html=True)
+                        st.markdown(
+                            f'<span class="source-tag">{s}</span>',
+                            unsafe_allow_html=True
+                        )
 
-                # Save to history
                 st.session_state.messages.append({
-                    "role":      "assistant",
-                    "content":   data["answer"],
+                    "role": "assistant",
+                    "content": data["answer"],
                     "as400_data": data.get("as400_data", {}),
-                    "escalate":  data.get("escalate_to_human", False),
-                    "sources":   data.get("sources", [])
+                    "escalate": data.get("escalate_to_human", False),
+                    "sources": data.get("sources", [])
                 })
 
             except requests.exceptions.ConnectionError:
                 st.error("Cannot connect to API. Run: uvicorn src.api.main:app --reload --port 8000")
+            except requests.exceptions.HTTPError as e:
+                st.error(f"API returned an error: {e}")
+                try:
+                    st.json(response.json())
+                except Exception:
+                    pass
             except Exception as e:
                 st.error(f"Error: {str(e)}")

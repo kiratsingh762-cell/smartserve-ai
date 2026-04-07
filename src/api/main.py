@@ -1,6 +1,7 @@
 import sys
 import os
 import re
+import time
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -10,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from src.rag.pipeline import RAGPipeline
 from src.as400.connector import AS400Connector
+from src.analytics.logger import AnalyticsLogger
 
 
 # ─────────────────────────────────────────────────────────────
@@ -62,6 +64,7 @@ app.add_middleware(
 print("[API] Loading RAG pipeline...")
 rag    = RAGPipeline()
 as400  = AS400Connector()
+analytics = AnalyticsLogger()
 print("[API] SmartServe AI API ready!")
 
 
@@ -95,6 +98,7 @@ def chat(request: ChatRequest):
     try:
         message = request.message.strip()
         as400_data = {}
+        start_time = time.time()
 
         if not message:
             raise HTTPException(status_code=400, detail="Message cannot be empty")
@@ -124,7 +128,7 @@ def chat(request: ChatRequest):
                 )
 
         # ── STEP 2: RAG Answer ────────────────────────────────
-        result = rag.get_answer(message)
+        result = rag.get_answer(message, session_id=request.session_id)
 
         # ── STEP 3: Escalation Logic ──────────────────────────
         # CONCEPT - When to escalate to a human:
@@ -142,6 +146,21 @@ def chat(request: ChatRequest):
             any(kw in message.lower() for kw in escalate_keywords)
         )
 
+        # Calculate response time
+        response_ms = int((time.time() - start_time) * 1000)
+
+        # Log the interaction to analytics DB
+        analytics.log(
+            session_id=request.session_id,
+            question=request.message,
+            answer=result["answer"],
+            sources=result["sources"],
+            confidence=result["confidence"],
+            escalated=should_escalate,
+            response_ms=response_ms,
+            turn_number=result.get("turn_count", 1)
+        )
+
         return ChatResponse(
             answer=result["answer"],
             sources=result["sources"],
@@ -154,6 +173,27 @@ def chat(request: ChatRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+
+# Add a new endpoint to clear session memory
+@app.delete("/session/{session_id}")
+def clear_session(session_id: str):
+    """Clears conversation memory for a specific session."""
+    rag.clear_session(session_id)
+    return {"status": "cleared", "session_id": session_id}
+
+
+@app.get("/analytics/summary")
+def analytics_summary():
+    """Returns key metrics: totals, escalation rate, confidence, top sources."""
+    return analytics.get_summary()
+
+
+@app.get("/analytics/recent")
+def analytics_recent(limit: int = 20):
+    """Returns the most recent N interactions."""
+    return {"interactions": analytics.get_recent(limit)}
+
 
 
 @app.get("/order/{order_id}")
@@ -167,15 +207,15 @@ def get_order(order_id: str):
 
 @app.get("/health")
 def detailed_health():
-    """Detailed health check for monitoring."""
     try:
         count = rag.vectorstore._collection.count()
         return {
-            "api":          "online",
-            "rag_pipeline": "online",
-            "vector_store": "online",
-            "vectors":      count,
-            "as400":        "simulated/online"
+            "api":            "online",
+            "rag_pipeline":   "online",
+            "vector_store":   "online",
+            "vectors":        count,
+            "active_sessions": rag.memory_manager.session_count(),
+            "as400":          "simulated/online"
         }
     except Exception as e:
         return {"api": "online", "error": str(e)}

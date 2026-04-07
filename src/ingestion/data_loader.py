@@ -32,27 +32,17 @@ class DataLoader:
         if pd.isna(text) or text is None:
             return ""
         text = str(text).strip()
-        # Remove closed double braces {{anything}}
-        text = re.sub(r"[{][{][^}]*[}][}]", "", text)
-        # Remove unclosed double braces {{anything (no closing))
-        text = re.sub(r"[{][{][^}]*", "", text)
-        # Remove closed single braces {anything}
-        text = re.sub(r"[{][^}]*[}]", "", text)
-        # Remove unclosed single braces {anything at end
-        text = re.sub(r"[{][^}]*$", "", text)
-        # Remove version numbers like 1.8.3
-        text = re.sub(r"\b\d+\.\d+\.\d+\b", "", text)
-        # Remove leftover dashes from removals
-        text = re.sub(r"\s+-\s+", " ", text)
-        # Collapse whitespace
-        text = re.sub(r"\s+", " ", text)
-        # Remove non-ASCII characters
-        text = re.sub(r'[^\x20-\x7E\n]', '', text)
-        # Collapse repeated punctuation
-        text = re.sub(r"([!?.])[!?.]+", r"\1", text)
+        text = re.sub(r"\{\{.*?\}\}", "", text, flags=re.DOTALL)  # closed {{}}
+        text = re.sub(r"\{\{[^}]*",   "", text)                   # unclosed {{
+        text = re.sub(r"\{.*?\}",     "", text, flags=re.DOTALL)  # closed {}
+        text = re.sub(r"\{[^}]*$",    "", text)                   # unclosed {
+        text = re.sub(r"\d+\.\d+\.\d+", "", text)
+        text = re.sub(r"\s+-\s+",     " ", text)
+        text = re.sub(r"\s+",         " ", text)
+        text = re.sub(r"[^ -~", "", text)
+        text = re.sub(r"([!?.])\1+", r"\g<1>", text)
         return text.strip()
 
-    @staticmethod
     def _is_meaningful(text, min_words=8):
         if not text or not text.strip():
             return False
@@ -66,19 +56,15 @@ class DataLoader:
 
     def load_support_tickets(self):
         print("[+] Loading Dataset 1: Customer Support Tickets...")
-        df = pd.read_csv(
-            os.path.join(self.raw_path, self.TICKETS_FILE),
-            encoding="utf-8", on_bad_lines="skip"
-        )
+        df = pd.read_csv(os.path.join(self.raw_path, self.TICKETS_FILE),
+                         encoding="utf-8", on_bad_lines="skip")
         print(f"    Raw rows: {len(df):,}")
         df.columns = df.columns.str.strip()
         df = df.dropna(subset=["Ticket Description", "Resolution"])
         df = df.drop_duplicates(subset=["Ticket Description"])
         print(f"    After dedup: {len(df):,}")
-        for col in [
-            "Ticket Description", "Resolution",
-            "Ticket Type", "Product Purchased", "Ticket Priority"
-        ]:
+        for col in ["Ticket Description", "Resolution",
+                    "Ticket Type", "Product Purchased", "Ticket Priority"]:
             if col in df.columns:
                 df[col] = df[col].apply(DataLoader._clean_text)
         mask = (
@@ -97,8 +83,7 @@ class DataLoader:
                 f"Proven Resolution: {row.get('Resolution', '')}"
             )
             docs.append({
-                "text": text,
-                "source": "support_tickets",
+                "text": text, "source": "support_tickets",
                 "metadata": {
                     "ticket_id":   str(row.get("Ticket ID", "N/A")),
                     "product":     str(row.get("Product Purchased", "N/A")),
@@ -111,10 +96,8 @@ class DataLoader:
 
     def load_faq_data(self):
         print("[+] Loading Dataset 2: Bitext FAQ...")
-        df = pd.read_csv(
-            os.path.join(self.raw_path, self.BITEXT_FILE),
-            encoding="utf-8", on_bad_lines="skip"
-        )
+        df = pd.read_csv(os.path.join(self.raw_path, self.BITEXT_FILE),
+                         encoding="utf-8", on_bad_lines="skip")
         print(f"    Raw rows: {len(df):,}")
         df.columns = df.columns.str.strip()
         df = df.dropna(subset=["instruction", "response"])
@@ -137,8 +120,7 @@ class DataLoader:
                 f"Answer: {row.get('response', '')}"
             )
             docs.append({
-                "text": text,
-                "source": "faq",
+                "text": text, "source": "faq",
                 "metadata": {
                     "category": str(row.get("category", "general")),
                     "intent":   str(row.get("intent", "N/A"))
@@ -149,38 +131,31 @@ class DataLoader:
 
     def load_ecommerce_intents(self):
         print("[+] Loading Dataset 3: Ecommerce FAQ Intents (JSON)...")
-        with open(
-            os.path.join(self.raw_path, self.INTENTS_FILE),
-            "r", encoding="utf-8"
-        ) as f:
+        with open(os.path.join(self.raw_path, self.INTENTS_FILE),
+                  "r", encoding="utf-8") as f:
             data = json.load(f)
-        intents = data.get('intents', data) if isinstance(data, dict) else data
+        intents = data.get("intents", data) if isinstance(data, dict) else data
         print(f"    Total intent groups: {len(intents):,}")
         docs, skipped = [], 0
         for intent in intents:
-            tag  = DataLoader._clean_text(str(intent.get('tag', 'general')))
-            pats = [DataLoader._clean_text(p) for p in intent.get('patterns',  []) if p]
-            ress = [DataLoader._clean_text(r) for r in intent.get('responses', []) if r]
+            tag = DataLoader._clean_text(str(intent.get("tag", "general")))
+            pats = [DataLoader._clean_text(p) for p in intent.get("patterns", []) if p]
+            ress = [DataLoader._clean_text(r) for r in intent.get("responses", []) if r]
             pats = [p for p in pats if DataLoader._is_meaningful(p, 2)]
             ress = [r for r in ress if DataLoader._is_meaningful(r, 3)]
             if not pats or not ress:
                 skipped += 1
                 continue
-            text = (
-                f"Topic: {tag}\n"
-                f"Customer might ask: {'|'.join(pats)}\n"
-                f"Best Answer: {ress[0]}"
-            )
+            text = (f"Topic: {tag}\n"
+                    f"Customer might ask: {' | '.join(pats)}\n"
+                    f"Best Answer: {ress[0]}")
             if len(ress) > 1:
                 text += f"\nAdditional Info: {' '.join(ress[1:])}"
             docs.append({
-                "text": text,
-                "source": "ecommerce_intents",
-                "metadata": {
-                    "tag":            tag,
-                    "pattern_count":  str(len(pats)),
-                    "response_count": str(len(ress))
-                }
+                "text": text, "source": "ecommerce_intents",
+                "metadata": {"tag": tag,
+                             "pattern_count":  str(len(pats)),
+                             "response_count": str(len(ress))}
             })
         print(f"    Skipped: {skipped}")
         print(f"    [OK] Produced {len(docs):,} intent documents")
@@ -197,13 +172,19 @@ class DataLoader:
         print("[SWEEP] Final safety sweep...")
         cleaned = 0
         for doc in all_docs:
-            orig = doc['text']
-            doc["text"] = re.sub(r"[{][{][^}]*[}][}]", "", doc["text"])
-            doc["text"] = re.sub(r"[{][{][^}]*",       "", doc["text"])
-            doc["text"] = re.sub(r"[{][^}]*[}]",       "", doc["text"])
-            doc["text"] = re.sub(r"[{][^}]*$",         "", doc["text"])
-            doc["text"] = re.sub(r"\s+",              " ", doc["text"]).strip()
-            if doc['text'] != orig:
+            orig = doc["text"]
+            # Closed double braces: {{anything}}
+            doc["text"] = re.sub(r"\{\{.*?\}\}", "", doc["text"], flags=re.DOTALL)
+            # UNCLOSED double braces: {{anything (no closing braces ever comes)
+            doc["text"] = re.sub(r"\{\{[^}]*",   "", doc["text"])
+            # Closed single braces: {anything}
+            doc["text"] = re.sub(r"\{.*?\}",      "", doc["text"], flags=re.DOTALL)
+            # Unclosed single braces: {anything (no closing brace)
+            doc["text"] = re.sub(r"\{[^}]*$",     "", doc["text"])
+            # Clean up leftover dashes/hyphens at word boundaries from removals
+            doc["text"] = re.sub(r"\s+-\s+",      " ", doc["text"])
+            doc["text"] = re.sub(r"\s+",          " ", doc["text"]).strip()
+            if doc["text"] != orig:
                 cleaned += 1
         print(f"    Cleaned {cleaned} additional docs in sweep")
         print("=" * 50)
@@ -218,7 +199,7 @@ class DataLoader:
         rows = [{"text": d["text"], "source": d["source"], **d["metadata"]}
                 for d in documents]
         df = pd.DataFrame(rows)
-        out = os.path.join(PROCESSED_DATA_PATH, 'knowledge_base.csv')
+        out = os.path.join(PROCESSED_DATA_PATH, "knowledge_base.csv")
         df.to_csv(out, index=False, encoding="utf-8")
         print(f"[SAVED] {len(df):,} documents -> {out}")
         return out
