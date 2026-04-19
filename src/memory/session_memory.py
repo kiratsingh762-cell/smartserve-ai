@@ -1,4 +1,5 @@
 import sys
+import time
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
@@ -15,8 +16,10 @@ class SimpleMemory:
         self.window_size = window_size
         # Each session stores a deque of (human, ai) tuples
         self._turns: deque = deque(maxlen=window_size)
+        self.last_active: float = time.time()
 
     def add_turn(self, human: str, ai: str):
+        self.last_active: float = time.time()
         self._turns.append((human, ai))
 
     def get_history_text(self) -> str:
@@ -57,11 +60,15 @@ class SessionMemoryManager:
         mem = self._get_or_create(session_id)
         mem.add_turn(human_message, ai_message)
 
-    def get_history_as_text(self, session_id: str) -> str:
-        """Returns conversation history as formatted text for prompt injection."""
+    def get_history_as_messages(self, session_id: str) -> list[dict]:
+        """Returns history as list of role/content dicts for direct API use."""
         if session_id not in self._sessions:
-            return ""
-        return self._sessions[session_id].get_history_text()
+            return []
+        messages = []
+        for human, ai in self._sessions[session_id]._turns:
+            messages.append({"role": "user", "content": human})
+            messages.append({"role": "assistant", "content": ai})
+        return messages
 
     def turn_count(self, session_id: str) -> int:
         """Returns number of completed turns in a session."""
@@ -77,3 +84,13 @@ class SessionMemoryManager:
     def session_count(self) -> int:
         """Returns total number of active sessions."""
         return len(self._sessions)
+    
+    def cleanup_stale_sessions(self, max_age_seconds: int = 3600):
+        """Call this periodically — e.g. every hour via a background task."""
+        now = time.time()
+        stale = [
+                 sid for sid, mem in self._sessions.items()
+                 if now - mem.last_active > max_age_seconds
+             ]
+        for sid in stale:
+            del self._sessions[sid]
